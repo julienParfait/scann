@@ -1,7 +1,6 @@
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer
 import av
-import cv2
 from pyzbar import pyzbar
 import pandas as pd
 from datetime import datetime
@@ -13,6 +12,7 @@ st.set_page_config(page_title="Pointage QR Code", page_icon="🛂")
 def load_membres():
     return pd.read_csv("membres.csv")
 
+# Fonction pour enregistrer le pointage
 def enregistrer_pointage(matricule, action):
     membres = load_membres()
     membre = membres[membres["matricule"] == int(matricule)]
@@ -47,29 +47,24 @@ def enregistrer_pointage(matricule, action):
     df.to_csv("pointages.csv", index=False)
     return True
 
+# Traitement de la vidéo sans opencv
 class VideoProcessor:
     def __init__(self):
-        self.detected_code = None
         self.processing = False
 
-    def recv(self, frame):
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
         if self.processing:
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-
+            return frame
         self.processing = True
-        decoded_objects = pyzbar.decode(img)
 
+        decoded_objects = pyzbar.decode(img)
         if decoded_objects:
-            # On prend le premier QR code détecté
             qr_data = decoded_objects[0].data.decode("utf-8")
-            self.detected_code = qr_data
             st.session_state['qr_code'] = qr_data
-            self.processing = False
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         self.processing = False
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+        return frame
 
 st.title("🛂 Pointage par QR Code")
 
@@ -99,15 +94,12 @@ if st.session_state['qr_code']:
         st.write(f"**Nom:** {nom}")
         st.write(f"**Service:** {service}")
 
-        # Choix automatique ou manuel de pointage (arrivée ou départ)
         action = st.radio("Type de pointage :", ["Arrivée", "Départ"], horizontal=True)
-
         if st.button("Enregistrer le pointage"):
             success = enregistrer_pointage(matricule, action)
             if success:
                 st.session_state['qr_code'] = None
 
-# Afficher les derniers pointages
 st.subheader("📋 Derniers pointages")
 try:
     df_pointages = pd.read_csv("pointages.csv")
