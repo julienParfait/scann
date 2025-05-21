@@ -1,108 +1,101 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer
-import av
-from pyzbar import pyzbar
 import pandas as pd
 from datetime import datetime
+from streamlit.components.v1 import html
 
-st.set_page_config(page_title="Pointage QR Code", page_icon="🛂")
+st.set_page_config(page_title="Scanner QR Code", page_icon="🛂")
 
-# Charger la base des membres
+st.title("🛂 Pointage par QR Code")
+
+# Charger la base
 @st.cache_data
 def load_membres():
     return pd.read_csv("membres.csv")
 
-# Fonction pour enregistrer le pointage
+# Sauvegarder pointage
 def enregistrer_pointage(matricule, action):
     membres = load_membres()
     membre = membres[membres["matricule"] == int(matricule)]
     if membre.empty:
-        st.error("⚠️ Matricule inconnu.")
-        return False
-
+        st.error("Matricule inconnu.")
+        return
     nom = membre.iloc[0]["nom"]
     service = membre.iloc[0]["service"]
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
         df = pd.read_csv("pointages.csv")
-    except FileNotFoundError:
+    except:
         df = pd.DataFrame(columns=["matricule", "nom", "service", "heure_arrivee", "heure_depart"])
 
     index = df[df["matricule"] == int(matricule)].index
-
     if action == "Arrivée":
         if not index.empty:
             df.at[index[0], "heure_arrivee"] = now
         else:
             df.loc[len(df)] = [matricule, nom, service, now, ""]
-        st.success(f"✅ {nom} enregistré comme arrivé à {now}")
     else:
         if not index.empty:
             df.at[index[0], "heure_depart"] = now
         else:
             df.loc[len(df)] = [matricule, nom, service, "", now]
-        st.success(f"👋 {nom} enregistré comme parti à {now}")
 
     df.to_csv("pointages.csv", index=False)
-    return True
+    st.success(f"{action} de {nom} enregistrée à {now}")
 
-# Traitement de la vidéo sans opencv
-class VideoProcessor:
-    def __init__(self):
-        self.processing = False
+# Interface utilisateur
+st.subheader("Scanner votre badge")
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        if self.processing:
-            return frame
-        self.processing = True
+code = st.text_input("Résultat du scan (automatique si scan réussi)", key="qr")
 
-        decoded_objects = pyzbar.decode(img)
-        if decoded_objects:
-            qr_data = decoded_objects[0].data.decode("utf-8")
-            st.session_state['qr_code'] = qr_data
+html("""
+<script src="https://unpkg.com/html5-qrcode"></script>
+<div id="reader" width="600px"></div>
+<script>
+function docReady(fn) {
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+        setTimeout(fn, 1);
+    } else {
+        document.addEventListener("DOMContentLoaded", fn);
+    }
+}
+docReady(function () {
+    const qr = new Html5Qrcode("reader");
+    qr.start({ facingMode: "environment" }, {
+        fps: 10,
+        qrbox: 250
+    }, qrCodeMessage => {
+        const input = window.parent.document.querySelector('input[data-testid="stTextInput"]');
+        if (input) {
+            input.value = qrCodeMessage;
+            const event = new Event('input', { bubbles: true });
+            input.dispatchEvent(event);
+        }
+        qr.stop();
+    });
+});
+</script>
+""", height=350)
 
-        self.processing = False
-        return frame
-
-st.title("🛂 Pointage par QR Code")
-
-if 'qr_code' not in st.session_state:
-    st.session_state['qr_code'] = None
-
-webrtc_ctx = webrtc_streamer(
-    key="qr-code-scanner",
-    video_processor_factory=VideoProcessor,
-    media_stream_constraints={"video": True, "audio": False},
-    async_processing=True,
-)
-
-if st.session_state['qr_code']:
-    matricule = st.session_state['qr_code']
-    st.info(f"QR Code détecté : {matricule}")
-
+# Affichage des infos
+if code:
+    st.success(f"QR Code détecté : {code}")
     membres = load_membres()
-    membre = membres[membres["matricule"] == int(matricule)]
-
-    if membre.empty:
-        st.error("Matricule inconnu.")
-        st.session_state['qr_code'] = None
-    else:
+    membre = membres[membres["matricule"] == int(code)]
+    if not membre.empty:
         nom = membre.iloc[0]["nom"]
         service = membre.iloc[0]["service"]
-        st.write(f"**Nom:** {nom}")
-        st.write(f"**Service:** {service}")
+        st.write(f"**Nom :** {nom}")
+        st.write(f"**Service :** {service}")
+        action = st.radio("Type de pointage", ["Arrivée", "Départ"], horizontal=True)
+        if st.button("Enregistrer"):
+            enregistrer_pointage(code, action)
+    else:
+        st.error("Matricule non reconnu.")
 
-        action = st.radio("Type de pointage :", ["Arrivée", "Départ"], horizontal=True)
-        if st.button("Enregistrer le pointage"):
-            success = enregistrer_pointage(matricule, action)
-            if success:
-                st.session_state['qr_code'] = None
-
+# Affichage historique
 st.subheader("📋 Derniers pointages")
 try:
-    df_pointages = pd.read_csv("pointages.csv")
-    st.dataframe(df_pointages.tail(10))
-except FileNotFoundError:
-    st.info("Aucun pointage enregistré pour le moment.")
+    st.dataframe(pd.read_csv("pointages.csv").tail(10))
+except:
+    st.info("Aucun pointage enregistré.")
